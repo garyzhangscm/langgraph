@@ -1,0 +1,21 @@
+# Development dependencies
+# Install with: pip install -r requirements-dev.txt
+
+# Core development tools
+mypy>=1.11.1
+ruff>=0.6.1
+
+# Testing framework
+pytest>=8.3.5
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+pytest-mock>=3.12.0
+
+# Documentation
+mkdocs>=1.5.0
+mkdocs-material>=9.0.0
+
+# Optional: Additional development tools
+ipython>=8.0.0
+jupyter>=1.0.0
+pre-commit>=3.0.0

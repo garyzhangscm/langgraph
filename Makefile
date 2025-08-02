@@ -53,11 +53,44 @@ spell_fix:
 	codespell --toml pyproject.toml -w
 
 ######################
+# DEPENDENCY MANAGEMENT
+######################
+
+install:
+	pip install -e .
+
+install-dev:
+	pip install -e ".[dev,test,docs]"
+
+install-test:
+	pip install -e ".[test]"
+
+update-deps:
+	pip list --outdated
+
+security-check:
+	pip install pip-audit safety || echo "Security tools not available"
+	pip-audit || echo "pip-audit not found"
+	safety check || echo "safety not found"
+
+freeze:
+	pip freeze > requirements.lock
+
+######################
 # HELP
 ######################
 
 help:
 	@echo '----'
+	@echo 'Dependencies:'
+	@echo 'install                      - install core dependencies'
+	@echo 'install-dev                  - install with dev dependencies'
+	@echo 'install-test                 - install with test dependencies'
+	@echo 'update-deps                  - check for outdated packages'
+	@echo 'security-check              - scan for security vulnerabilities'
+	@echo 'freeze                       - generate requirements.lock file'
+	@echo ''
+	@echo 'Development:'
 	@echo 'format                       - run code formatters'
 	@echo 'lint                         - run linters'
 	@echo 'test                         - run unit tests'
