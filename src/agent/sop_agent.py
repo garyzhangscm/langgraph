@@ -19,7 +19,7 @@ load_dotenv()
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_core.vectorstores import VectorStore
 from langchain_anthropic import ChatAnthropic

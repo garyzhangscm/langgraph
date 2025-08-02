@@ -45,6 +45,11 @@ cd langgraph
 pip install -e ".[dev,test,docs]"
 ```
 
+### ⚠️ First-Time Setup Notes
+
+- **First run may be slow**: The system downloads embedding models (~90MB) on first use
+- **Windows symlinks warning**: See [HuggingFace documentation](https://huggingface.co/docs/huggingface_hub/how-to-cache#limitations) to enable Developer Mode for better performance
+
 ### 📋 What Gets Installed
 - **Core**: LangGraph, LangChain, Claude LLM, Vector database
 - **Document Processing**: PDF, Word, Markdown support  

@@ -16,6 +16,7 @@ dependencies = [
     "python-dotenv>=1.0.1",       # Environment variable management
     "langchain_anthropic",        # Claude LLM integration
     "langchain-community>=0.0.29", # Community LangChain components
+    "langchain-huggingface>=0.0.3", # HuggingFace embeddings (updated package)
     "sentence-transformers>=2.2.0", # Text embeddings
     "faiss-cpu>=1.7.0",          # Vector database
     "PyMuPDF>=1.23.0",           # PDF processing
@@ -140,7 +141,10 @@ pip install faiss-gpu
 ### **3. LangChain Updates**
 ```bash
 # LangChain ecosystem updates frequently
-pip install --upgrade langchain-community langchain-core
+pip install --upgrade langchain-community langchain-core langchain-huggingface
+
+# Note: HuggingFaceEmbeddings moved from langchain-community to langchain-huggingface
+# in LangChain 0.2.2+. The old import is deprecated and will be removed in v1.0
 ```
 
 ## **Development Workflow**
