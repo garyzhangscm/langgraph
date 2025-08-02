@@ -22,7 +22,12 @@ import asyncio
 import os
 from pathlib import Path
 
-from agent.sop_agent import query_sop_knowledge_base, build_sop_knowledge_base, get_sop_recommendations
+from agent.sop_agent import (
+    query_sop_knowledge_base, 
+    build_sop_knowledge_base, 
+    get_sop_recommendations,
+    get_sop_source_folder
+)
 
 
 llm = ChatAnthropic(model="claude-3-5-sonnet-latest")
@@ -44,6 +49,8 @@ class Configuration(TypedDict):
     """
 
     my_configurable_param: str
+    sop_source_folder: NotRequired[Optional[str]]
+    sop_knowledge_base_path: NotRequired[Optional[str]]
 
  
 class State(TypedDict):
@@ -270,14 +277,21 @@ router_builder.add_edge("llm_call_get_answer", END)
 
 # Asynchronous initialization function
 async def initialize_sop_knowledge_base():
-    """Initialize the SOP knowledge base from static/data/sop folder."""
+    """Initialize the SOP knowledge base from configured folder."""
     try:
-        # Get the project root directory (where this file is located)
-        project_root = Path(__file__).parent.parent.parent
-        sop_folder = project_root / "static" / "data" / "sop"
+        # Get configured SOP source folder
+        sop_folder_config = get_sop_source_folder()
+        
+        # If it's a relative path, make it relative to project root
+        if not os.path.isabs(sop_folder_config):
+            project_root = Path(__file__).parent.parent.parent
+            sop_folder = project_root / sop_folder_config
+        else:
+            sop_folder = Path(sop_folder_config)
         
         if sop_folder.exists():
             print(f"Building SOP knowledge base from {sop_folder}...")
+            print(f"Configuration: SOP_SOURCE_FOLDER={sop_folder_config}")
             
             # Run knowledge base building in a thread pool to avoid blocking
             loop = asyncio.get_event_loop()
@@ -293,7 +307,9 @@ async def initialize_sop_knowledge_base():
             
             return results
         else:
-            print(f"SOP folder not found at {sop_folder}. Skipping knowledge base initialization.")
+            print(f"SOP folder not found at {sop_folder}")
+            print(f"Configuration: SOP_SOURCE_FOLDER={sop_folder_config}")
+            print("Skipping knowledge base initialization.")
             return None
             
     except Exception as e:

@@ -12,6 +12,10 @@ from typing import Dict, List, Optional, Any
 import hashlib
 from dataclasses import dataclass, asdict
 from datetime import datetime
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 from langchain_core.documents import Document
 from langchain_core.embeddings import Embeddings
@@ -52,9 +56,13 @@ class SOPKnowledgeBase:
     
     def __init__(
         self, 
-        kb_path: str = "sop_knowledge_base",
+        kb_path: Optional[str] = None,
         embeddings: Optional[Embeddings] = None
     ):
+        # Use environment variable or default
+        if kb_path is None:
+            kb_path = get_sop_knowledge_base_path()
+        
         self.kb_path = Path(kb_path)
         self.kb_path.mkdir(exist_ok=True)
         
@@ -396,12 +404,29 @@ class SOPKnowledgeBase:
         }
 
 
+# Configuration helper functions
+def get_sop_source_folder() -> str:
+    """Get the configured SOP source folder path."""
+    return os.getenv("SOP_SOURCE_FOLDER", "static/data/sop")
+
+def get_sop_knowledge_base_path() -> str:
+    """Get the configured SOP knowledge base path."""
+    return os.getenv("SOP_KNOWLEDGE_BASE_PATH", "static/data/vector_store/sop_knowledge_base")
+
+
 # Global knowledge base instance
 sop_kb = SOPKnowledgeBase()
 
 
-def build_sop_knowledge_base(folder_path: str) -> Dict[str, Any]:
-    """Build the SOP knowledge base from a folder of files."""
+def build_sop_knowledge_base(folder_path: Optional[str] = None) -> Dict[str, Any]:
+    """Build the SOP knowledge base from a folder of files.
+    
+    Args:
+        folder_path: Path to SOP files. If None, uses SOP_SOURCE_FOLDER env var.
+    """
+    if folder_path is None:
+        folder_path = get_sop_source_folder()
+    
     return sop_kb.build_knowledge_base(folder_path)
 
 
