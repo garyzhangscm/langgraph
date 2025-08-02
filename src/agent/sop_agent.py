@@ -21,6 +21,18 @@ from langchain_core.vectorstores import VectorStore
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage, SystemMessage
 
+# PDF processing imports
+try:
+    import fitz  # PyMuPDF
+    PDF_AVAILABLE = True
+except ImportError:
+    try:
+        import pypdf
+        PDF_AVAILABLE = True
+    except ImportError:
+        PDF_AVAILABLE = False
+        print("Warning: PDF support not available. Install PyMuPDF or pypdf: pip install PyMuPDF")
+
 
 @dataclass
 class SOPDocument:
@@ -94,6 +106,13 @@ class SOPKnowledgeBase:
     
     def _extract_file_content(self, file_path: Path) -> str:
         """Extract content from various file formats."""
+        file_extension = file_path.suffix.lower()
+        
+        # Handle PDF files
+        if file_extension == '.pdf':
+            return self._extract_pdf_content(file_path)
+        
+        # Handle text-based files
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 return f.read()
@@ -104,6 +123,53 @@ class SOPKnowledgeBase:
             except Exception as e:
                 print(f"Error reading {file_path}: {e}")
                 return ""
+    
+    def _extract_pdf_content(self, file_path: Path) -> str:
+        """Extract text content from PDF files."""
+        if not PDF_AVAILABLE:
+            print(f"PDF support not available. Skipping {file_path}")
+            return ""
+        
+        try:
+            # Try PyMuPDF first (more reliable)
+            if 'fitz' in globals():
+                return self._extract_pdf_with_pymupdf(file_path)
+            else:
+                return self._extract_pdf_with_pypdf(file_path)
+        except Exception as e:
+            print(f"Error extracting PDF content from {file_path}: {e}")
+            return ""
+    
+    def _extract_pdf_with_pymupdf(self, file_path: Path) -> str:
+        """Extract PDF content using PyMuPDF."""
+        import fitz
+        
+        text_content = ""
+        doc = fitz.open(str(file_path))
+        
+        for page_num in range(len(doc)):
+            page = doc.load_page(page_num)
+            text_content += page.get_text()
+            text_content += "\n\n"  # Add page breaks
+        
+        doc.close()
+        return text_content.strip()
+    
+    def _extract_pdf_with_pypdf(self, file_path: Path) -> str:
+        """Extract PDF content using pypdf."""
+        import pypdf
+        
+        text_content = ""
+        
+        with open(file_path, 'rb') as file:
+            pdf_reader = pypdf.PdfReader(file)
+            
+            for page_num in range(len(pdf_reader.pages)):
+                page = pdf_reader.pages[page_num]
+                text_content += page.extract_text()
+                text_content += "\n\n"  # Add page breaks
+        
+        return text_content.strip()
     
     def _generate_file_hash(self, file_path: Path) -> str:
         """Generate hash for file to detect changes."""
@@ -174,7 +240,7 @@ class SOPKnowledgeBase:
         }
         
         # Supported file extensions
-        supported_extensions = {'.txt', '.md', '.rst', '.doc', '.docx'}
+        supported_extensions = {'.txt', '.md', '.rst', '.doc', '.docx', '.pdf'}
         
         # Find all SOP files
         sop_files = []

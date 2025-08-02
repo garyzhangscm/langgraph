@@ -49,6 +49,22 @@ def temp_sop_folder():
             
         with open(Path(temp_dir) / "data_backup.txt", "w") as f:
             f.write(sop2_content)
+        
+        # Create a simple test PDF content (mock PDF for testing)
+        pdf_content = """
+        # Password Security SOP
+        
+        This document outlines password security requirements.
+        
+        ## Requirements:
+        - Minimum 12 characters
+        - Mix of uppercase, lowercase, numbers, symbols
+        - Change every 90 days
+        - No reuse of last 12 passwords
+        """
+        
+        with open(Path(temp_dir) / "password_security.txt", "w") as f:
+            f.write(pdf_content)  # Using .txt for testing since we can't easily create real PDFs in tests
             
         yield temp_dir
 
@@ -136,6 +152,40 @@ class TestSOPKnowledgeBase:
         
         assert hash1 == hash2
         assert len(hash1) == 32  # MD5 hash length
+    
+    @patch('agent.sop_agent.ChatAnthropic')
+    @patch('agent.sop_agent.PDF_AVAILABLE', True)
+    def test_extract_pdf_content_no_pdf_lib(self, mock_llm_class, temp_kb_path):
+        """Test PDF content extraction when PDF libraries are not available."""
+        mock_llm_class.return_value = Mock()
+        
+        kb = SOPKnowledgeBase(kb_path=temp_kb_path)
+        
+        # Create mock PDF file
+        test_file = Path(temp_kb_path) / "test.pdf"
+        test_file.write_bytes(b"%PDF-1.4 mock pdf content")
+        
+        # Test when PDF_AVAILABLE is False
+        with patch('agent.sop_agent.PDF_AVAILABLE', False):
+            content = kb._extract_pdf_content(test_file)
+            assert content == ""
+    
+    @patch('agent.sop_agent.ChatAnthropic')
+    def test_extract_file_content_pdf_extension(self, mock_llm_class, temp_kb_path):
+        """Test that PDF files are routed to PDF extraction method."""
+        mock_llm_class.return_value = Mock()
+        
+        kb = SOPKnowledgeBase(kb_path=temp_kb_path)
+        
+        # Create mock PDF file
+        test_file = Path(temp_kb_path) / "test.pdf"
+        test_file.write_bytes(b"%PDF-1.4 mock pdf content")
+        
+        # Mock the PDF extraction method
+        with patch.object(kb, '_extract_pdf_content', return_value="Extracted PDF content") as mock_pdf_extract:
+            content = kb._extract_file_content(test_file)
+            mock_pdf_extract.assert_called_once_with(test_file)
+            assert content == "Extracted PDF content"
     
     @patch('agent.sop_agent.ChatAnthropic')
     @patch('agent.sop_agent.HuggingFaceEmbeddings')

@@ -18,6 +18,9 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from IPython.display import Image, display
 from typing_extensions import NotRequired
 from typing import TypedDict, Optional, List, Dict, Any
+import asyncio
+import os
+from pathlib import Path
 
 from agent.sop_agent import query_sop_knowledge_base, build_sop_knowledge_base, get_sop_recommendations
 
@@ -264,6 +267,54 @@ router_builder.add_conditional_edges(
 router_builder.add_edge("llm_call_generate_sql", END)
 router_builder.add_edge("llm_call_get_sop_filename", END)
 router_builder.add_edge("llm_call_get_answer", END)
+
+# Asynchronous initialization function
+async def initialize_sop_knowledge_base():
+    """Initialize the SOP knowledge base from static/data/sop folder."""
+    try:
+        # Get the project root directory (where this file is located)
+        project_root = Path(__file__).parent.parent.parent
+        sop_folder = project_root / "static" / "data" / "sop"
+        
+        if sop_folder.exists():
+            print(f"Building SOP knowledge base from {sop_folder}...")
+            
+            # Run knowledge base building in a thread pool to avoid blocking
+            loop = asyncio.get_event_loop()
+            results = await loop.run_in_executor(
+                None, 
+                build_sop_knowledge_base, 
+                str(sop_folder)
+            )
+            
+            print(f"SOP Knowledge base initialized successfully!")
+            print(f"Processed: {results['processed']}, Updated: {results['updated']}, "
+                  f"Skipped: {results['skipped']}, Errors: {results['errors']}")
+            
+            return results
+        else:
+            print(f"SOP folder not found at {sop_folder}. Skipping knowledge base initialization.")
+            return None
+            
+    except Exception as e:
+        print(f"Error initializing SOP knowledge base: {e}")
+        return None
+
+# Initialize the knowledge base on module load
+try:
+    # Only run if we're in an async context or can create one
+    if asyncio.get_event_loop().is_running():
+        # If already in an async context, schedule the task
+        asyncio.create_task(initialize_sop_knowledge_base())
+    else:
+        # If not in async context, run it
+        asyncio.run(initialize_sop_knowledge_base())
+except RuntimeError:
+    # If no event loop exists, create one and run
+    try:
+        asyncio.run(initialize_sop_knowledge_base())
+    except Exception as e:
+        print(f"Could not initialize SOP knowledge base: {e}")
 
 # Compile workflow
 router_workflow = router_builder.compile()
