@@ -442,6 +442,11 @@ def get_sop_recommendations(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
     return sop_kb.query_sop(query, top_k)
 
 
+def list_all_sops() -> List[Dict[str, Any]]:
+    """Get a list of all SOPs in the knowledge base."""
+    return sop_kb.list_all_sops()
+
+
 # File download functionality
 def get_sop_file_info(filename: str) -> Optional[Dict[str, Any]]:
     """Get information about an SOP file for download."""

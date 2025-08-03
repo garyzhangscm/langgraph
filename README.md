@@ -77,6 +77,37 @@ langgraph dev
 
 For more information on getting started with LangGraph Server, [see here](https://langchain-ai.github.io/langgraph/tutorials/langgraph-platform/local-server/).
 
+## 🌐 Web Interface
+
+### Streamlit Application
+Launch the user-friendly web interface for easy interaction:
+
+```bash
+# Quick launch (recommended)
+python run_streamlit.py
+
+# Or direct command
+streamlit run streamlit_app.py
+```
+
+**Features:**
+- 🎯 **Natural language query input** - Ask questions in plain English
+- 🔍 **SQL query generation** - Get schema-aware SQL queries from natural language
+- 📋 **SOP document search** - Find and download Standard Operating Procedures
+- 🗄️ **Database exploration** - Browse tables, columns, and relationships
+- 📊 **Knowledge base status** - Real-time health monitoring
+- 📝 **Query history** - Track and reuse previous queries
+- 💡 **Example queries** - Guided prompts for each category
+
+**Query Examples:**
+- *SQL*: "Show me all client information", "Find orders from last month"
+- *SOP*: "How do I onboard new users?", "What's the incident response process?"
+- *General*: "Explain database normalization", "What are REST API best practices?"
+
+Access the interface at: `http://localhost:8501`
+
+See [STREAMLIT_README.md](STREAMLIT_README.md) for detailed documentation.
+
 ## How to customize
 
 1. **Define configurable parameters**: Modify the `Configuration` class in the `graph.py` file to expose the arguments you want to configure. For example, in a chatbot application you may want to define a dynamic system prompt or LLM to use. For more information on configurations in LangGraph, [see here](https://langchain-ai.github.io/langgraph/concepts/low_level/?h=configuration#configuration).

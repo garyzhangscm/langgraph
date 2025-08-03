@@ -404,10 +404,10 @@ class SQLSchemaKnowledgeBase:
         
         try:
             # Search for similar documents
-            docs = self.vector_store.similarity_search(query, k=top_k)
+            docs = self.vector_store.similarity_search_with_score(query, k=top_k)
             
             results = []
-            for doc in docs:
+            for doc, score in docs:
                 file_name = doc.metadata.get("file_name", "unknown")
                 if file_name in self.schemas:
                     schema = self.schemas[file_name]
@@ -416,9 +416,12 @@ class SQLSchemaKnowledgeBase:
                         "file_name": file_name,
                         "description": schema.description,
                         "columns_count": len(schema.columns),
-                        "columns": schema.columns[:5],  # First 5 columns
+                        # Return all columns instead of just first 5
+                        # "columns": schema.columns[:5],  # First 5 columns
+                        "columns": schema.columns,
                         "relationships": schema.relationships,
-                        "file_path": schema.file_path
+                        "file_path": schema.file_path,
+                        "score": score
                     })
             
             return results

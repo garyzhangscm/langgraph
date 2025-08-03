@@ -17,7 +17,9 @@ dependencies = [
 	"sentence-transformers>=2.2.0",
 	"faiss-cpu>=1.7.0",
 	"PyMuPDF>=1.23.0",
-	"python-docx>=0.8.11"
+	"python-docx>=0.8.11",
+	"streamlit>=1.28.0",
+	"watchdog>=3.0.0"
 ]
 
 

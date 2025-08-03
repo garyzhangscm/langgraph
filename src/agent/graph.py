@@ -112,7 +112,7 @@ def llm_call_generate_sql(state: State):
         debug_state(state, "AFTER_SCHEMA_QUERY", {
             "query": user_input,
             "relevant_tables_count": len(relevant_tables),
-            "relevant_tables": relevant_tables[:2] if relevant_tables else []  # Show first 2 tables
+            "relevant_tables": relevant_tables[:3] if relevant_tables else []  # Show first 2 tables
         })
 
         if relevant_tables:
@@ -124,7 +124,8 @@ def llm_call_generate_sql(state: State):
                     # Format table information for the prompt
                     columns_info = "\n".join([
                         f"  - {col['name']} ({col['data_type']}{',' if col['nullable'] else ', NOT NULL'}): {col['description']}"
-                        for col in table_details['columns'][:10]  # Limit to first 10 columns to avoid prompt overflow
+                        # for col in table_details['columns'][:10]  # Limit to first 10 columns to avoid prompt overflow
+                        for col in table_details['columns']
                     ])
                     
                     table_info = f"""
@@ -132,7 +133,6 @@ def llm_call_generate_sql(state: State):
 Description: {table_details['description']}
 Columns:
 {columns_info}
-{'...' if len(table_details['columns']) > 10 else ''}
 """
                     schema_context.append(table_info)
             
@@ -194,7 +194,8 @@ I'll provide general SQL guidance, but for more accurate queries specific to you
 3. Any specific relationships or constraints
 
 Provide clean, executable SQL queries with proper formatting."""
-    
+
+    debug_state(state, "SQL_NODE_LLM_QUERY", {"prompt": system_prompt})
     # Generate SQL query response
     result = llm.invoke([
         SystemMessage(content=system_prompt),
