@@ -1,6 +1,6 @@
 # Configuration Guide
 
-This document describes the configuration options for the LangGraph SOP Knowledge Base Agent.
+This document describes the configuration options for the LangGraph SOP and SQL Schema Knowledge Base Agents.
 
 ## Environment Variables
 
@@ -24,7 +24,17 @@ LANGSMITH_API_KEY=your_langsmith_api_key_here
 SOP_SOURCE_FOLDER=static/data/sop
 
 # Knowledge base storage path (where vector database is stored)
-SOP_KNOWLEDGE_BASE_PATH=sop_knowledge_base
+SOP_KNOWLEDGE_BASE_PATH=static/data/vector_store/sop_knowledge_base
+```
+
+### SQL Schema Knowledge Base Configuration
+
+```env
+# SQL schema files folder path (relative to project root or absolute path)
+SQL_SCHEMA_FOLDER=static/data/db_schema
+
+# SQL knowledge base storage path (where vector database is stored)
+SQL_KNOWLEDGE_BASE_PATH=static/data/vector_store/sql_knowledge_base
 ```
 
 ## Configuration Options
@@ -45,15 +55,37 @@ SOP_KNOWLEDGE_BASE_PATH=sop_knowledge_base
   - Shared storage: `/shared/knowledge_base`
   - Custom location: `/data/vector_db/sops`
 
+### `SQL_SCHEMA_FOLDER`
+- **Purpose**: Specifies where database schema files are located
+- **Default**: `static/data/db_schema`
+- **Examples**:
+  - Relative path: `static/data/db_schema`
+  - Absolute path: `/home/user/database/schemas`
+  - Windows path: `C:\Database\Schemas`
+
+### `SQL_KNOWLEDGE_BASE_PATH`
+- **Purpose**: Where the SQL schema vector database and metadata are stored
+- **Default**: `static/data/vector_store/sql_knowledge_base`
+- **Examples**:
+  - Default: `static/data/vector_store/sql_knowledge_base`
+  - Shared storage: `/shared/sql_knowledge_base`
+  - Custom location: `/data/vector_db/schemas`
+
 ## Supported File Types
 
-The knowledge base automatically processes these file types:
+### SOP Knowledge Base
+The SOP knowledge base automatically processes these file types:
 
 - **Text files**: `.txt`
 - **Markdown files**: `.md`
 - **reStructuredText files**: `.rst`
 - **Microsoft Word files**: `.doc`, `.docx`
 - **PDF files**: `.pdf`
+
+### SQL Schema Knowledge Base
+The SQL schema knowledge base processes:
+
+- **Schema definition files**: `.txt` (structured database schema format)
 
 ## Directory Structure
 
@@ -66,8 +98,16 @@ langgraph/
 │       │   ├── onboarding.md
 │       │   ├── security.pdf
 │       │   └── procedures.txt
+│       ├── db_schema/        # SQL schema files (SQL_SCHEMA_FOLDER)
+│       │   └── BY_WMS_2021_1/
+│       │       ├── client.txt
+│       │       ├── adrmst.txt
+│       │       └── ...
 │       └── vector_store/
-│           └── sop_knowledge_base/  # Vector database (SOP_KNOWLEDGE_BASE_PATH)
+│           ├── sop_knowledge_base/    # SOP Vector database
+│           │   ├── metadata.json
+│           │   └── vector_store/
+│           └── sql_knowledge_base/    # SQL Schema Vector database
 │               ├── metadata.json
 │               └── vector_store/
 └── .env                      # Configuration file
@@ -107,14 +147,28 @@ print(f"Knowledge base location: {kb_path}")
 
 ## Automatic Initialization
 
-The knowledge base is automatically built when the application starts:
+The knowledge bases are automatically built when the application starts, but only if they don't already exist:
 
-1. **Checks** if the SOP source folder exists
-2. **Scans** for supported file types
-3. **Processes** each file to extract content
-4. **Generates** metadata using AI
-5. **Creates** vector embeddings for search
-6. **Stores** everything in the knowledge base
+### Smart Initialization Process
+
+1. **Checks** if knowledge base already exists by looking for:
+   - `metadata.json` file in the knowledge base directory
+   - `vector_store/` subdirectory with vector embeddings
+2. **Skips** initialization if both files exist (saves time on subsequent runs)
+3. **Rebuilds** only if knowledge base is missing or incomplete
+
+### Build Process (when needed)
+
+1. **Scans** source folders for supported file types
+2. **Processes** each file to extract content
+3. **Generates** metadata and relationships 
+4. **Creates** vector embeddings for search
+5. **Stores** everything in the knowledge base
+
+### Knowledge Base Locations
+
+- **SOP Knowledge Base**: `static/data/vector_store/sop_knowledge_base/`
+- **SQL Schema Knowledge Base**: `static/data/vector_store/sql_knowledge_base/`
 
 ## Manual Rebuild
 

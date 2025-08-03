@@ -12,6 +12,8 @@ from typing import Dict, List, Optional, Any
 import hashlib
 from dataclasses import dataclass, asdict
 from datetime import datetime
+import shutil
+import base64
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -438,3 +440,134 @@ def query_sop_knowledge_base(query: str) -> Optional[str]:
 def get_sop_recommendations(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
     """Get multiple SOP recommendations for a query."""
     return sop_kb.query_sop(query, top_k)
+
+
+# File download functionality
+def get_sop_file_info(filename: str) -> Optional[Dict[str, Any]]:
+    """Get information about an SOP file for download."""
+    if filename in sop_kb.documents:
+        sop_doc = sop_kb.documents[filename]
+        file_path = Path(sop_doc.file_path)
+        
+        if file_path.exists():
+            file_size = file_path.stat().st_size
+            return {
+                "filename": filename,
+                "title": sop_doc.title,
+                "file_path": str(file_path),
+                "file_size": file_size,
+                "file_size_mb": round(file_size / (1024 * 1024), 2),
+                "last_modified": sop_doc.last_modified,
+                "file_extension": file_path.suffix,
+                "available": True
+            }
+    
+    # If not in knowledge base, try to find in SOP folder
+    sop_folder = Path(get_sop_source_folder())
+    possible_files = list(sop_folder.glob(f"**/{filename}"))
+    
+    if possible_files:
+        file_path = possible_files[0]
+        file_size = file_path.stat().st_size
+        return {
+            "filename": filename,
+            "title": filename,  # Use filename as title if not in KB
+            "file_path": str(file_path),
+            "file_size": file_size,
+            "file_size_mb": round(file_size / (1024 * 1024), 2),
+            "last_modified": datetime.fromtimestamp(file_path.stat().st_mtime).isoformat(),
+            "file_extension": file_path.suffix,
+            "available": True
+        }
+    
+    return None
+
+
+def prepare_file_download(filename: str) -> Dict[str, Any]:
+    """Prepare a file for download by encoding it or providing download info."""
+    file_info = get_sop_file_info(filename)
+    
+    if not file_info:
+        return {
+            "success": False,
+            "error": f"File '{filename}' not found in SOP collection",
+            "available_files": list(sop_kb.documents.keys())[:10]  # Show first 10 files
+        }
+    
+    file_path = Path(file_info["file_path"])
+    
+    try:
+        # For small files, we can encode them directly
+        if file_info["file_size"] < 1024 * 1024:  # Less than 1MB
+            with open(file_path, 'rb') as f:
+                file_content = f.read()
+                encoded_content = base64.b64encode(file_content).decode('utf-8')
+            
+            return {
+                "success": True,
+                "filename": filename,
+                "title": file_info["title"],
+                "file_size": file_info["file_size"],
+                "file_size_mb": file_info["file_size_mb"],
+                "file_extension": file_info["file_extension"],
+                "encoded_content": encoded_content,
+                "download_method": "base64_encoded",
+                "instructions": f"File '{filename}' is ready for download. The content is base64 encoded."
+            }
+        else:
+            # For larger files, provide file path and download instructions
+            return {
+                "success": True,
+                "filename": filename,
+                "title": file_info["title"],
+                "file_size": file_info["file_size"],
+                "file_size_mb": file_info["file_size_mb"],
+                "file_extension": file_info["file_extension"],
+                "file_path": str(file_path),
+                "download_method": "file_path",
+                "instructions": f"File '{filename}' ({file_info['file_size_mb']} MB) is available at: {file_path}"
+            }
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error preparing file '{filename}' for download: {str(e)}",
+            "file_info": file_info
+        }
+
+
+def copy_sop_file_to_downloads(filename: str, downloads_folder: str = "downloads") -> Dict[str, Any]:
+    """Copy an SOP file to a downloads folder for easy access."""
+    file_info = get_sop_file_info(filename)
+    
+    if not file_info:
+        return {
+            "success": False,
+            "error": f"File '{filename}' not found"
+        }
+    
+    try:
+        # Create downloads folder if it doesn't exist
+        downloads_path = Path(downloads_folder)
+        downloads_path.mkdir(exist_ok=True)
+        
+        source_path = Path(file_info["file_path"])
+        dest_path = downloads_path / filename
+        
+        # Copy the file
+        shutil.copy2(source_path, dest_path)
+        
+        return {
+            "success": True,
+            "filename": filename,
+            "source_path": str(source_path),
+            "destination_path": str(dest_path),
+            "file_size_mb": file_info["file_size_mb"],
+            "message": f"File '{filename}' copied to {dest_path}"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": f"Error copying file '{filename}': {str(e)}"
+        }
