@@ -19,3 +19,13 @@ mkdocs-material>=9.0.0
 ipython>=8.0.0
 jupyter>=1.0.0
 pre-commit>=3.0.0
+
+# Visualization and data processing
+matplotlib>=3.5.0
+numpy>=1.21.0
+
+# LangChain integrations
+langchain-openai>=0.0.2
+
+# Data validation
+pydantic>=2.0.0

@@ -546,6 +546,43 @@ def execute_sql_query(state: State):
             "sql_results": []
         }
 
+def extract_chart_size_from_input(user_input: str) -> tuple[int, int]:
+    """Extract chart size from user input using LLM, defaulting to (12, 8) if not found."""
+    try:
+        size_extraction_prompt = f"""
+        Analyze the following user input and extract any chart size specifications.
+        Look for mentions of:
+        - Width and height (e.g., "12 by 8", "10x6", "width 14 height 10")
+        - Size keywords (e.g., "large chart", "small figure", "big visualization")
+        - Specific dimensions in inches or pixels
+        
+        User input: "{user_input}"
+        
+        If you find size specifications, return them as "width,height" (e.g., "12,8").
+        If no size is specified or unclear, return "12,8" as default.
+        Only return the numbers in the format "width,height" with no other text.
+        """
+        
+        response = llm.invoke(size_extraction_prompt)
+        size_text = response.content.strip()
+        
+        # Parse the response
+        if ',' in size_text:
+            width_str, height_str = size_text.split(',', 1)
+            width = int(float(width_str.strip()))
+            height = int(float(height_str.strip()))
+            
+            # Validate reasonable bounds (3-30 inches)
+            if 3 <= width <= 30 and 3 <= height <= 30:
+                return (width, height)
+        
+    except Exception:
+        # If any error occurs, fall back to default
+        pass
+    
+    # Default fallback
+    return (12, 8)
+
 # Node 6 - Chart Visualization
 def create_chart_visualization(state: State):
     """Create chart visualization from SQL query results."""
@@ -596,8 +633,11 @@ def create_chart_visualization(state: State):
         numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
         text_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
         
+        # Extract chart size from user input using LLM
+        chart_width, chart_height = extract_chart_size_from_input(user_input)
+        
         # Create appropriate chart based on data structure and user intent
-        plt.figure(figsize=(12, 8))
+        plt.figure(figsize=(chart_width, chart_height))
         
         if chart_type == 'pie' and len(numeric_cols) >= 1 and len(text_cols) >= 1:
             # Pie chart: categorical column for labels, numeric for values
