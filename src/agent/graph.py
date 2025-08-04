@@ -11,6 +11,7 @@ from typing import Any, Dict, TypedDict
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import StateGraph, START, END
 from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 from typing_extensions import Literal
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -36,9 +37,105 @@ from agent.sql_agent import (
     build_sql_knowledge_base,
     get_sql_schema_folder
 )
+from agent.database_connector import (
+    DatabaseConnector,
+    DatabaseConnectionError,
+    DatabaseQueryError,
+    format_query_results_as_table,
+    get_available_database_drivers
+)
 
 
-llm = ChatAnthropic(model="claude-3-5-sonnet-latest")
+def get_llm_config():
+    """Get LLM configuration from environment variables."""
+    llm_provider = os.getenv("LLM_PROVIDER", "anthropic").lower()
+    llm_model = os.getenv("LLM_MODEL", "claude-3-5-sonnet-latest")
+    
+    return llm_provider, llm_model
+
+def initialize_llm(provider: str = None, model: str = None):
+    """Initialize LLM based on provider and model configuration."""
+    if provider is None or model is None:
+        provider, model = get_llm_config()
+    
+    provider = provider.lower()
+    
+    if provider == "anthropic":
+        # Verify API key is available
+        api_key = os.getenv("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise ValueError("ANTHROPIC_API_KEY not found in environment variables")
+        
+        return ChatAnthropic(
+            model=model,
+            api_key=api_key
+        )
+    
+    elif provider == "openai":
+        # Verify API key is available
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise ValueError("OPENAI_API_KEY not found in environment variables")
+        
+        return ChatOpenAI(
+            model=model,
+            api_key=api_key
+        )
+    
+    else:
+        raise ValueError(f"Unsupported LLM provider: {provider}. Supported providers: anthropic, openai")
+
+# Initialize LLM from configuration
+try:
+    llm = initialize_llm()
+    print(f"✅ LLM initialized: {get_llm_config()[0]} ({get_llm_config()[1]})")
+except Exception as e:
+    print(f"❌ LLM initialization failed: {e}")
+    print("Falling back to default Anthropic model...")
+    llm = ChatAnthropic(model="claude-3-5-sonnet-latest")
+
+def extract_sql_from_response(response_content: str) -> Optional[str]:
+    """Extract SQL query from LLM response content."""
+    import re
+    
+    # Look for SQL code blocks
+    sql_patterns = [
+        r'```sql\s*(.*?)\s*```',
+        r'```\s*(SELECT.*?;)\s*```',
+        r'```\s*(INSERT.*?;)\s*```',
+        r'```\s*(UPDATE.*?;)\s*```',
+        r'```\s*(DELETE.*?;)\s*```',
+        r'```\s*(WITH.*?;)\s*```'
+    ]
+    
+    for pattern in sql_patterns:
+        match = re.search(pattern, response_content, re.DOTALL | re.IGNORECASE)
+        if match:
+            sql = match.group(1).strip()
+            if sql:
+                return sql
+    
+    # Look for SQL without code blocks
+    sql_keywords = ['SELECT', 'INSERT', 'UPDATE', 'DELETE', 'WITH']
+    lines = response_content.split('\n')
+    
+    for i, line in enumerate(lines):
+        line_stripped = line.strip()
+        if any(line_stripped.upper().startswith(keyword) for keyword in sql_keywords):
+            # Try to find the complete SQL statement
+            sql_lines = [line_stripped]
+            j = i + 1
+            while j < len(lines):
+                next_line = lines[j].strip()
+                sql_lines.append(next_line)
+                if next_line.endswith(';'):
+                    break
+                j += 1
+            sql = '\n'.join(sql_lines).strip()
+            if sql:
+                return sql
+    
+    return None
 
 # Debug helper function
 def debug_state(state: State, node_name: str = "Unknown", variables: Dict[str, Any] = None):
@@ -74,6 +171,8 @@ class Configuration(TypedDict):
     my_configurable_param: str
     sop_source_folder: NotRequired[Optional[str]]
     sop_knowledge_base_path: NotRequired[Optional[str]]
+    llm_provider: NotRequired[Optional[str]]
+    llm_model: NotRequired[Optional[str]]
 
  
 class State(TypedDict):
@@ -90,6 +189,9 @@ class State(TypedDict):
     sop_filename: NotRequired[Optional[str]]
     download_info: NotRequired[Optional[Dict[str, Any]]]
     download_requested: NotRequired[Optional[bool]]
+    sql_query: NotRequired[Optional[str]]
+    sql_results: NotRequired[Optional[List[Dict[str, Any]]]]
+    sql_execution_status: NotRequired[Optional[str]]
     
 # Node 1 - generate SQL query
 def llm_call_generate_sql(state: State):
@@ -202,7 +304,13 @@ Provide clean, executable SQL queries with proper formatting."""
         HumanMessage(content=user_input)
     ])
     
-    return {"output": result.content}
+    # Extract SQL query from the response
+    sql_query = extract_sql_from_response(result.content)
+    
+    return {
+        "output": result.content,
+        "sql_query": sql_query
+    }
 
 
 # Node 2 - get SOP Document
@@ -335,6 +443,302 @@ def handle_sop_download(state: State):
             "output": f"❌ Unexpected error during download preparation: {str(e)}",
             "download_info": {"success": False, "error": str(e)}
         }
+
+
+# Node 5 - Execute SQL Query
+def execute_sql_query(state: State):
+    """Execute the SQL query generated by llm_call_generate_sql node."""
+    
+    sql_query = state.get("sql_query")
+
+    if not sql_query:
+        return {
+            "output": "❌ No SQL query found to execute. Please generate a SQL query first.",
+            "sql_execution_status": "failed",
+            "sql_results": []
+        }
+    
+    debug_state(state, "SQL_EXECUTION_START", {"sql_query": sql_query})
+    
+    try:
+        # Check available database drivers
+        available_drivers = get_available_database_drivers()
+        debug_state(state, "AVAILABLE_DB_DRIVERS", available_drivers)
+        
+        # Create database connector
+        db_connector = DatabaseConnector()
+        
+        # Test connection first
+        connection_test = db_connector.test_connection()
+        if not connection_test["success"]:
+            return {
+                "output": f"❌ Database connection failed: {connection_test['error']}\n\n"
+                         f"Database Configuration:\n"
+                         f"  • Type: {connection_test['db_type']}\n"
+                         f"  • Host: {connection_test['host']}\n"
+                         f"  • Port: {connection_test['port']}\n"
+                         f"  • Database: {connection_test['database']}\n\n"
+                         f"Available drivers: {available_drivers}",
+                "sql_execution_status": "connection_failed",
+                "sql_results": []
+            }
+        
+        # Execute the SQL query
+        with db_connector:
+            results, columns = db_connector.execute_query(sql_query)
+            
+            # Format results as table
+            table_output = format_query_results_as_table(results, columns)
+            
+            success_output = f"✅ **SQL Query Executed Successfully**\n\n"
+            success_output += f"**Query:**\n```sql\n{sql_query}\n```\n\n"
+            success_output += f"**Results:**\n```\n{table_output}\n```"
+            
+            return {
+                "output": success_output,
+                "sql_execution_status": "success",
+                "sql_results": results
+            }
+    
+    except DatabaseConnectionError as e:
+        error_output = f"❌ **Database Connection Error**\n\n"
+        error_output += f"Failed to connect to database: {str(e)}\n\n"
+        error_output += f"**Troubleshooting Steps:**\n"
+        error_output += f"1. Check database connection settings in .env file\n"
+        error_output += f"2. Ensure database server is running\n"
+        error_output += f"3. Verify network connectivity\n"
+        error_output += f"4. Check database credentials\n\n"
+        error_output += f"**Available database drivers:**\n"
+        for db_type, available in available_drivers.items():
+            status = "✅ Available" if available else "❌ Not installed"
+            error_output += f"  • {db_type}: {status}\n"
+        
+        return {
+            "output": error_output,
+            "sql_execution_status": "connection_failed",
+            "sql_results": []
+        }
+    
+    except DatabaseQueryError as e:
+        error_output = f"❌ **SQL Query Execution Error**\n\n"
+        error_output += f"Query: ```sql\n{sql_query}\n```\n\n"
+        error_output += f"Error: {str(e)}\n\n"
+        error_output += f"**Common issues:**\n"
+        error_output += f"1. Syntax errors in SQL query\n"
+        error_output += f"2. Referenced tables or columns don't exist\n"
+        error_output += f"3. Insufficient database permissions\n"
+        error_output += f"4. Database timeout or connection issues"
+        
+        return {
+            "output": error_output,
+            "sql_execution_status": "query_failed",
+            "sql_results": []
+        }
+    
+    except Exception as e:
+        error_output = f"❌ **Unexpected Error During SQL Execution**\n\n"
+        error_output += f"Query: ```sql\n{sql_query}\n```\n\n"
+        error_output += f"Error: {str(e)}"
+        
+        return {
+            "output": error_output,
+            "sql_execution_status": "unexpected_error",
+            "sql_results": []
+        }
+
+# Node 6 - Chart Visualization
+def create_chart_visualization(state: State):
+    """Create chart visualization from SQL query results."""
+    
+    sql_results = state.get("sql_results", [])
+    user_input = state.get("input", "")
+    
+    if not sql_results:
+        return {
+            "output": "❌ No data available for chart visualization. Please execute a SQL query first.",
+            "sql_execution_status": "no_data"
+        }
+    
+    try:
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        import numpy as np
+        from datetime import datetime
+        import io
+        import base64
+        
+        # Convert results to DataFrame for easier manipulation
+        df = pd.DataFrame(sql_results)
+        
+        if df.empty:
+            return {
+                "output": "❌ No data rows returned from query. Cannot create chart.",
+                "sql_execution_status": "empty_data"
+            }
+        
+        # Analyze user query to determine chart type
+        chart_keywords = {
+            'bar': ['bar', 'column', 'compare', 'comparison', 'category', 'categories'],
+            'line': ['line', 'trend', 'time', 'over time', 'timeline', 'series', 'progression'],
+            'pie': ['pie', 'proportion', 'percentage', 'share', 'distribution', 'breakdown'],
+            'scatter': ['scatter', 'correlation', 'relationship', 'vs', 'against'],
+            'histogram': ['histogram', 'frequency', 'distribution', 'bins']
+        }
+        
+        # Determine chart type based on user input
+        chart_type = 'bar'  # default
+        for chart, keywords in chart_keywords.items():
+            if any(keyword in user_input.lower() for keyword in keywords):
+                chart_type = chart
+                break
+        
+        # Auto-detect appropriate chart type based on data structure
+        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
+        text_cols = df.select_dtypes(include=['object', 'string']).columns.tolist()
+        
+        # Create appropriate chart based on data structure and user intent
+        plt.figure(figsize=(12, 8))
+        
+        if chart_type == 'pie' and len(numeric_cols) >= 1 and len(text_cols) >= 1:
+            # Pie chart: categorical column for labels, numeric for values
+            labels_col = text_cols[0]
+            values_col = numeric_cols[0]
+            
+            # Group by labels and sum values if needed
+            grouped = df.groupby(labels_col)[values_col].sum()
+            
+            plt.pie(grouped.values, labels=grouped.index, autopct='%1.1f%%', startangle=90)
+            plt.title(f'{values_col} by {labels_col}')
+            
+        elif chart_type == 'line' and len(numeric_cols) >= 2:
+            # Line chart: x and y numeric values
+            x_col = numeric_cols[0]
+            y_col = numeric_cols[1]
+            
+            df_sorted = df.sort_values(x_col)
+            plt.plot(df_sorted[x_col], df_sorted[y_col], marker='o')
+            plt.xlabel(x_col)
+            plt.ylabel(y_col)
+            plt.title(f'{y_col} vs {x_col}')
+            plt.grid(True, alpha=0.3)
+            
+        elif chart_type == 'scatter' and len(numeric_cols) >= 2:
+            # Scatter plot: x and y numeric values
+            x_col = numeric_cols[0]
+            y_col = numeric_cols[1]
+            
+            plt.scatter(df[x_col], df[y_col], alpha=0.6)
+            plt.xlabel(x_col)
+            plt.ylabel(y_col)
+            plt.title(f'{y_col} vs {x_col}')
+            plt.grid(True, alpha=0.3)
+            
+        elif chart_type == 'histogram' and len(numeric_cols) >= 1:
+            # Histogram: distribution of a numeric column
+            col = numeric_cols[0]
+            plt.hist(df[col], bins=20, alpha=0.7, edgecolor='black')
+            plt.xlabel(col)
+            plt.ylabel('Frequency')
+            plt.title(f'Distribution of {col}')
+            plt.grid(True, alpha=0.3)
+            
+        else:
+            # Default bar chart
+            if len(text_cols) >= 1 and len(numeric_cols) >= 1:
+                # Category vs numeric value
+                x_col = text_cols[0]
+                y_col = numeric_cols[0]
+                
+                # Group by category and sum values if needed
+                grouped = df.groupby(x_col)[y_col].sum()
+                
+                plt.bar(range(len(grouped)), grouped.values)
+                plt.xticks(range(len(grouped)), grouped.index, rotation=45, ha='right')
+                plt.xlabel(x_col)
+                plt.ylabel(y_col)
+                plt.title(f'{y_col} by {x_col}')
+                
+            elif len(numeric_cols) >= 2:
+                # Two numeric columns
+                x_col = df.columns[0]
+                y_col = numeric_cols[0] if df.columns[0] not in numeric_cols else numeric_cols[1]
+                
+                plt.bar(range(len(df)), df[y_col])
+                plt.xticks(range(len(df)), df[x_col], rotation=45, ha='right')
+                plt.xlabel(x_col)
+                plt.ylabel(y_col)
+                plt.title(f'{y_col} by {x_col}')
+                
+            else:
+                # Single column chart
+                col = df.columns[0]
+                plt.bar(range(len(df)), df[col])
+                plt.xlabel('Index')
+                plt.ylabel(col)
+                plt.title(f'Values of {col}')
+        
+        plt.tight_layout()
+        
+        # Save chart to base64 string for display
+        buffer = io.BytesIO()
+        plt.savefig(buffer, format='png', dpi=300, bbox_inches='tight')
+        buffer.seek(0)
+        chart_base64 = base64.b64encode(buffer.getvalue()).decode()
+        plt.close()
+        
+        # Create output with chart
+        chart_output = f"📊 **Chart Visualization Generated**\n\n"
+        chart_output += f"**Chart Type:** {chart_type.title()}\n"
+        chart_output += f"**Data Points:** {len(df)} rows\n"
+        chart_output += f"**Columns Used:** {', '.join(df.columns.tolist())}\n\n"
+        
+        # Include chart as base64 data URL
+        chart_output += f"**Chart:**\n"
+        chart_output += f"![Chart](data:image/png;base64,{chart_base64})\n\n"
+        
+        # Also include the original query results
+        original_output = state.get("output", "")
+        if original_output:
+            chart_output += f"**Original Query Results:**\n{original_output}"
+        
+        return {
+            "output": chart_output,
+            "chart_data": chart_base64,
+            "chart_type": chart_type
+        }
+        
+    except ImportError as e:
+        error_output = f"❌ **Chart Visualization Error**\n\n"
+        error_output += f"Missing required packages for chart generation: {str(e)}\n\n"
+        error_output += f"**Required packages:**\n"
+        error_output += f"  • matplotlib\n"
+        error_output += f"  • pandas\n"
+        error_output += f"  • numpy\n\n"
+        error_output += f"Install with: `pip install matplotlib pandas numpy`\n\n"
+        
+        # Include original results without chart
+        original_output = state.get("output", "")
+        if original_output:
+            error_output += f"**Original Query Results:**\n{original_output}"
+            
+        return {
+            "output": error_output,
+            "sql_execution_status": "chart_error"
+        }
+        
+    except Exception as e:
+        error_output = f"❌ **Chart Generation Error**\n\n"
+        error_output += f"Error creating chart: {str(e)}\n\n"
+        
+        # Include original results without chart
+        original_output = state.get("output", "")
+        if original_output:
+            error_output += f"**Original Query Results:**\n{original_output}"
+            
+        return {
+            "output": error_output,
+            "sql_execution_status": "chart_error"
+        }
     
 def router_node(state: State) -> State:
     user_input = state["input"]
@@ -465,6 +869,31 @@ def route_after_sop(state: State) -> str:
         return "handle_sop_download"
     else:
         return "END"
+
+def route_after_sql_execution(state: State) -> str:
+    """Route after SQL execution - check if chart visualization is requested"""
+    user_input = state.get("input", "").lower()
+    sql_execution_status = state.get("sql_execution_status")
+    sql_results = state.get("sql_results", [])
+    
+    # Keywords that indicate chart/visualization request
+    chart_keywords = [
+        'chart', 'graph', 'plot', 'visualize', 'visualization', 'show', 'display',
+        'bar chart', 'line chart', 'pie chart', 'scatter plot', 'histogram',
+        'trend', 'comparison', 'distribution', 'breakdown'
+    ]
+    
+    # Check if user wants chart visualization
+    wants_chart = any(keyword in user_input for keyword in chart_keywords)
+    
+    # Only create chart if:
+    # 1. User specifically requested chart/visualization
+    # 2. SQL execution was successful
+    # 3. We have data to visualize
+    if wants_chart and sql_execution_status == "success" and sql_results:
+        return "create_chart_visualization"
+    else:
+        return "END"
         
          
 
@@ -473,6 +902,8 @@ router_builder = StateGraph(State)
 
 # Add nodes
 router_builder.add_node("llm_call_generate_sql", llm_call_generate_sql)
+router_builder.add_node("execute_sql_query", execute_sql_query)
+router_builder.add_node("create_chart_visualization", create_chart_visualization)
 router_builder.add_node("llm_call_get_sop_filename", llm_call_get_sop_filename)
 router_builder.add_node("llm_call_get_answer", llm_call_get_answer)
 router_builder.add_node("handle_sop_download", handle_sop_download)
@@ -492,8 +923,23 @@ router_builder.add_conditional_edges(
     },
 )
 
-# Direct endings for SQL and answer nodes
-router_builder.add_edge("llm_call_generate_sql", END)
+# SQL generation goes to SQL execution, then conditionally to chart or end
+router_builder.add_edge("llm_call_generate_sql", "execute_sql_query")
+
+# Conditional routing after SQL execution - either chart visualization or end
+router_builder.add_conditional_edges(
+    "execute_sql_query",
+    route_after_sql_execution,
+    {
+        "create_chart_visualization": "create_chart_visualization",
+        "END": END
+    }
+)
+
+# Chart visualization node ends the flow
+router_builder.add_edge("create_chart_visualization", END)
+
+# Answer node ends directly
 router_builder.add_edge("llm_call_get_answer", END)
 
 # Conditional routing after SOP node - either download or end
