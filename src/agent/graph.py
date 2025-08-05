@@ -31,7 +31,8 @@ from agent.sop_agent import (
     get_sop_source_folder,
     prepare_file_download,
     copy_sop_file_to_downloads,
-    get_sop_file_info
+    get_sop_file_info,
+    get_sop_download_endpoint
 )
 from agent.sql_agent import (
     build_sql_knowledge_base,
@@ -350,10 +351,30 @@ def llm_call_get_sop_filename(state: State):
         
         if best_filename:
             output = f"Best matching SOP: {best_filename}"
+            
+            # Get download link for the best match
+            best_match_info = None
+            if recommendations:
+                for rec in recommendations:
+                    if rec['filename'] == best_filename:
+                        best_match_info = rec
+                        break
+            
+            if best_match_info and 'download_link' in best_match_info:
+                download_text = best_match_info.get('download_text', '📁 Download')
+                download_link = best_match_info['download_link']
+                # Create Streamlit-compatible markdown link
+                output += f"\n[{download_text}]({download_link})"
+            
             if recommendations:
                 output += "\n\nOther relevant SOPs:"
                 for i, rec in enumerate(recommendations[:3], 1):
+                    download_link = rec.get('download_link', '')
+                    download_text = rec.get('download_text', '📁 Download')
                     output += f"\n{i}. {rec['filename']} - {rec['title']}"
+                    if download_link:
+                        # Create Streamlit-compatible markdown link
+                        output += f"\n   [{download_text}]({download_link})"
             
             if download_requested:
                 output += f"\n\nPreparing '{best_filename}' for download..."
@@ -784,97 +805,61 @@ def router_node(state: State) -> State:
     user_input = state["input"]
     
     router_prompt = """
-        LangGraph Router System Prompt
-        You are an intelligent routing agent that analyzes user requests and determines the appropriate path for handling them. Based on the user's input, you must route to exactly ONE of three paths:
-        Routing Options
-        Return exactly one of these values:
+You are an intelligent routing agent that analyzes user requests and determines the appropriate path. You must route to exactly ONE of three paths:
 
-        sql - For database queries and data retrieval
-        sop - For Standard Operating Procedure requests
-        answer - For knowledge base questions
+**ROUTING OPTIONS:**
+- sop: For Standard Operating Procedures, documents, or process-related requests
+- sql: For database queries and data retrieval
+- answer: For general questions and knowledge-based responses
 
-        Routing Logic
-        Route to "sql" when:
+**ROUTING LOGIC:**
 
-        User wants to retrieve, query, find, or get data from a database
-        Requests involve specific data points, records, counts, or statistics
-        Keywords indicating data operations: "show me", "find all", "count", "list", "get data", "query", "search records"
-        Examples:
+**Route to "sop" when:**
+- User explicitly mentions "SOP" or implicitly wants to review documents for certain processes
+- Requests for procedures, workflows, protocols, guidelines, or step-by-step instructions
+- Looking for documentation about specific processes or operations
+- Keywords: "SOP", "procedure", "process", "document", "how to do", "steps for", "workflow", "protocol", "guideline", "manual", "documentation", "review process", "check process"
 
-        "Show me all orders from last month"
-        "How many users are active?"
-        "Find customers in California"
-        "Get the sales data for Q3"
-        "List all products with low inventory"
+Examples:
+- "Show me the SOP for user onboarding"
+- "I need to review the process for handling returns"
+- "What's the procedure for system maintenance?"
+- "How do I escalate customer complaints?" (process-oriented)
+- "Where is the documentation for backup procedures?"
+- "I want to check the workflow for order processing"
 
+**Route to "sql" when:**
+- User wants to query database or get data for analysis/usage
+- Requests involve retrieving specific data points, records, counts, or statistics
+- Keywords: "show me data", "find all", "count", "list", "get data from database", "query", "retrieve", "search records", "data analysis"
 
+Examples:
+- "Show me all orders from last month"
+- "How many users are active?"
+- "Get the sales data for Q3"
+- "Query the customer database for emails"
+- "Find all products with low inventory"
 
-        Route to "sop" when:
+**Route to "answer" for everything else:**
+- General questions requiring explanations, definitions, or conceptual information
+- Troubleshooting questions not related to specific processes or data
+- Advisory questions, best practices, or theoretical discussions
 
-        User explicitly asks for an SOP, procedure, or process document
-        Requests for step-by-step instructions or workflows
-        Requests to build or update the knowledge base
-        Keywords: "SOP", "procedure", "process", "how to", "steps", "workflow", "protocol", "guideline", "build knowledge base", "build kb"
-        Examples:
+Examples:
+- "What is the difference between REST and GraphQL?"
+- "Why is my system running slowly?"
+- "Explain authentication methods"
+- "What are the benefits of microservices?"
 
-        "Show me the SOP for user onboarding"
-        "I need the procedure for handling returns"
-        "What's the process for escalating issues?"
-        "Give me the workflow for order processing"
-        "Where is the SOP for data backup?"
-        "Build knowledge base from '/path/to/sop/folder'"
-        "Update the SOP knowledge base"
+**DECISION PRIORITY:**
+1. If user mentions SOP or wants to review documents/processes → **sop**
+2. If user wants to query database or get data → **sql** 
+3. Otherwise → **answer**
 
+**OUTPUT FORMAT:**
+Respond with ONLY the routing decision: sop, sql, or answer
 
-
-        Route to "answer" when:
-
-        User asks general questions requiring knowledge-based responses
-        Requests for explanations, definitions, or conceptual information
-        Troubleshooting or advisory questions
-        Keywords: "what is", "why", "how does", "explain", "tell me about", "help with"
-        Examples:
-
-        "What is the difference between X and Y?"
-        "Why is my system running slowly?"
-        "How does authentication work?"
-        "Explain the benefits of this feature"
-        "What should I do if I encounter error X?"
-
-
-
-        Decision Framework
-
-        Check for explicit SOP requests first - If user mentions procedures, workflows, or asks "how to" do something operationally
-        Check for data/query needs second - If user wants specific data, numbers, records, or database information
-        Default to knowledge base - If user asks general questions, needs explanations, or seeks advice
-
-        Edge Cases
-
-        "How to query the database?" → answer (asking about methodology, not requesting actual data)
-        "Show me the SOP and also get the data" → sop (prioritize the explicit SOP request)
-        "What's in our customer table?" → sql (requesting actual data content)
-        "How do I write an SOP?" → answer (asking for guidance, not requesting a specific SOP)
-
-        Output Format
-        Respond with ONLY the routing decision. No explanations, no additional text.
-        Valid responses: sql, sop, or answer
-        Examples
-        Input: "Show me all customers who placed orders last week"
-        Output: sql
-        Input: "I need the SOP for handling customer complaints"
-        Output: sop
-        Input: "What is the best practice for password security?"
-        Output: answer
-        Input: "How many active users do we have?"
-        Output: sql
-        Input: "Explain the difference between REST and GraphQL"
-        Output: answer
-        Input: "Where can I find the procedure for system maintenance?"
-        Output: sop
-
-        Now analyze the user's request and return the appropriate routing decision.
-         
+Now analyze the user's request and return the appropriate routing decision.
     """
     
     # Get routing decision from LLM
@@ -886,6 +871,9 @@ def router_node(state: State) -> State:
             HumanMessage(content=state["input"]),
         ]
     )
+
+
+    debug_state(state, "ROUTE_NODE_END", {"router_prompt": router_prompt, "user_input": state["input"]})
 
     return {"decision": decision.step}
      

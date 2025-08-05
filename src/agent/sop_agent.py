@@ -14,6 +14,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 import shutil
 import base64
+from urllib.parse import quote
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -361,13 +362,17 @@ class SOPKnowledgeBase:
                 filename = doc.metadata.get("filename", "unknown")
                 if filename in self.documents:
                     sop_doc = self.documents[filename]
+                    download_info = create_download_link(filename)
+                    
                     results.append({
                         "filename": filename,
                         "title": sop_doc.title,
                         "summary": sop_doc.summary,
                         "keywords": sop_doc.keywords,
                         "file_path": sop_doc.file_path,
-                        "relevance_score": "high"  # Could implement actual scoring
+                        "relevance_score": "high",  # Could implement actual scoring
+                        "download_link": download_info["download_link"],
+                        "download_text": download_info["download_text"]
                     })
             
             return results
@@ -385,16 +390,19 @@ class SOPKnowledgeBase:
     
     def list_all_sops(self) -> List[Dict[str, Any]]:
         """List all SOPs in the knowledge base."""
-        return [
-            {
+        results = []
+        for doc in self.documents.values():
+            download_info = create_download_link(doc.filename)
+            results.append({
                 "filename": doc.filename,
                 "title": doc.title,
                 "summary": doc.summary,
                 "keywords": doc.keywords,
-                "last_modified": doc.last_modified
-            }
-            for doc in self.documents.values()
-        ]
+                "last_modified": doc.last_modified,
+                "download_link": download_info["download_link"],
+                "download_text": download_info["download_text"]
+            })
+        return results
     
     def get_stats(self) -> Dict[str, Any]:
         """Get knowledge base statistics."""
@@ -414,6 +422,25 @@ def get_sop_source_folder() -> str:
 def get_sop_knowledge_base_path() -> str:
     """Get the configured SOP knowledge base path."""
     return os.getenv("SOP_KNOWLEDGE_BASE_PATH", "static/data/vector_store/sop_knowledge_base")
+
+
+def get_sop_download_endpoint() -> str:
+    """Get the configured SOP download endpoint."""
+    return os.getenv("SOP_DOWNLOAD_ENDPOINT", "http://localhost:8000/download")
+
+
+def create_download_link(filename: str) -> Dict[str, str]:
+    """Create a proper download link for a filename, handling spaces and special characters."""
+    download_endpoint = get_sop_download_endpoint()
+    # URL encode the filename to handle spaces and special characters
+    encoded_filename = quote(filename)
+    download_url = f"{download_endpoint}/{encoded_filename}"
+    
+    return {
+        "download_link": download_url,
+        "download_text": "📁 Download",
+        "filename": filename
+    }
 
 
 # Global knowledge base instance
@@ -456,6 +483,8 @@ def get_sop_file_info(filename: str) -> Optional[Dict[str, Any]]:
         
         if file_path.exists():
             file_size = file_path.stat().st_size
+            download_info = create_download_link(filename)
+            
             return {
                 "filename": filename,
                 "title": sop_doc.title,
@@ -464,7 +493,9 @@ def get_sop_file_info(filename: str) -> Optional[Dict[str, Any]]:
                 "file_size_mb": round(file_size / (1024 * 1024), 2),
                 "last_modified": sop_doc.last_modified,
                 "file_extension": file_path.suffix,
-                "available": True
+                "available": True,
+                "download_link": download_info["download_link"],
+                "download_text": download_info["download_text"]
             }
     
     # If not in knowledge base, try to find in SOP folder
@@ -517,6 +548,8 @@ def prepare_file_download(filename: str) -> Dict[str, Any]:
                 "file_extension": file_info["file_extension"],
                 "encoded_content": encoded_content,
                 "download_method": "base64_encoded",
+                "download_link": file_info.get("download_link", ""),
+                "download_text": file_info.get("download_text", "📁 Download"),
                 "instructions": f"File '{filename}' is ready for download. The content is base64 encoded."
             }
         else:
@@ -530,6 +563,8 @@ def prepare_file_download(filename: str) -> Dict[str, Any]:
                 "file_extension": file_info["file_extension"],
                 "file_path": str(file_path),
                 "download_method": "file_path",
+                "download_link": file_info.get("download_link", ""),
+                "download_text": file_info.get("download_text", "📁 Download"),
                 "instructions": f"File '{filename}' ({file_info['file_size_mb']} MB) is available at: {file_path}"
             }
             
@@ -568,6 +603,8 @@ def copy_sop_file_to_downloads(filename: str, downloads_folder: str = "downloads
             "source_path": str(source_path),
             "destination_path": str(dest_path),
             "file_size_mb": file_info["file_size_mb"],
+            "download_link": file_info.get("download_link", ""),
+            "download_text": file_info.get("download_text", "📁 Download"),
             "message": f"File '{filename}' copied to {dest_path}"
         }
         
